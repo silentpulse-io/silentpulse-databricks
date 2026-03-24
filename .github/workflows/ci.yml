@@ -1,0 +1,17 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Lint
+        run: uvx ruff@0.11.0 check silentpulse-sdp/ silentpulse-datasource/ silentpulse-uc-discovery/
+      - name: Format check
+        run: uvx ruff@0.11.0 format --check silentpulse-sdp/ silentpulse-datasource/ silentpulse-uc-discovery/

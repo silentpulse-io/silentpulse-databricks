@@ -1,0 +1,45 @@
+# SilentPulse Metric View Definition
+# Deploy this as a Unity Catalog Metric View to track security visibility KPIs.
+#
+# See: https://docs.databricks.com/en/sql/language-manual/sql-ref-syntax-ddl-create-metric-view.html
+
+name: security_visibility
+description: Security telemetry visibility metrics from SilentPulse
+
+metrics:
+  - name: active_alerts
+    description: Number of currently active SilentPulse alerts
+    type: count
+    filter: "status = 'active'"
+    source:
+      table: silentpulse.monitoring.alerts
+
+  - name: silent_feeds
+    description: Number of security feeds that have gone silent
+    type: count
+    filter: "status = 'active' AND alert_type = 'silence'"
+    source:
+      table: silentpulse.monitoring.alerts
+
+  - name: visibility_coverage_pct
+    description: Percentage of expected assets currently reporting telemetry
+    type: ratio
+    numerator: "COUNT(CASE WHEN last_seen > current_timestamp() - INTERVAL 1 HOUR THEN 1 END)"
+    denominator: "COUNT(*)"
+    source:
+      table: silentpulse.monitoring.asset_status
+
+  - name: mean_time_to_detect_silence
+    description: Average time between telemetry loss and alert creation (minutes)
+    type: average
+    expression: "AVG(TIMESTAMPDIFF(MINUTE, silence_start, alert_created_at))"
+    source:
+      table: silentpulse.monitoring.alert_timeline
+
+dimensions:
+  - name: severity
+    column: severity
+  - name: asset_group
+    column: asset_group_name
+  - name: flow_name
+    column: flow_name
