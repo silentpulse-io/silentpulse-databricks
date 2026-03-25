@@ -11,6 +11,16 @@ from silentpulse_sdp.observe import completeness, freshness, heartbeat, volume
 # ---------------------------------------------------------------------------
 
 
+class MockRow:
+    """Minimal mock for a PySpark Row."""
+
+    def __init__(self, *values):
+        self._values = values
+
+    def __getitem__(self, idx):
+        return self._values[idx]
+
+
 class MockColumn:
     """Minimal mock for a PySpark Column object."""
 
@@ -18,19 +28,50 @@ class MockColumn:
         return self
 
 
+class MockGrouped:
+    """Mock for GroupedData — returned by DataFrame.groupBy()."""
+
+    def __init__(self, rows: list | None = None):
+        self._rows = rows
+
+    def count(self):
+        return MockDataFrame(rows=self._rows)
+
+
 class MockDataFrame:
     """Minimal mock for a PySpark DataFrame."""
 
-    def __init__(self, count: int = 0, columns: list[str] | None = None, streaming: bool = False):
+    def __init__(
+        self,
+        count: int = 0,
+        columns: list[str] | None = None,
+        streaming: bool = False,
+        rows: list | None = None,
+        grouped_rows: list | None = None,
+    ):
         self.isStreaming = streaming
         self._count = count
         self.columns = columns or []
+        self._rows = rows  # list of MockRow for collect()
+        self._grouped_rows = grouped_rows  # rows returned by groupBy().count().collect()
 
     def count(self) -> int:
         return self._count
 
     def filter(self, cond):
-        return MockDataFrame(count=0, columns=self.columns)
+        return MockDataFrame(count=0, columns=self.columns, rows=self._rows)
+
+    def select(self, *cols):
+        return self
+
+    def distinct(self):
+        return self
+
+    def groupBy(self, *cols):
+        return MockGrouped(self._grouped_rows)
+
+    def collect(self):
+        return self._rows or []
 
     def __getitem__(self, key):
         return MockColumn()
@@ -214,3 +255,109 @@ def test_decorator_preserves_function_name():
         return None
 
     assert my_special_table.__name__ == "my_special_table"
+
+
+# ---------------------------------------------------------------------------
+# asset_column — per-asset telemetry
+# ---------------------------------------------------------------------------
+
+
+def _mock_df_with_hosts():
+    """DataFrame with 3 distinct hosts."""
+    return MockDataFrame(
+        count=100,
+        columns=["host", "timestamp"],
+        rows=[MockRow("host1"), MockRow("host2"), MockRow("host3")],
+    )
+
+
+def _mock_df_with_host_counts():
+    """DataFrame that returns per-host row counts from groupBy."""
+    return MockDataFrame(
+        count=100,
+        columns=["host", "timestamp"],
+        rows=[MockRow("host1"), MockRow("host2"), MockRow("host3")],
+        grouped_rows=[MockRow("host1", 40), MockRow("host2", 35), MockRow("host3", 25)],
+    )
+
+
+@patch("silentpulse_sdp.observe.client.send_telemetry")
+def test_heartbeat_asset_column(mock_send):
+    @heartbeat(integration_point="zerobus", asset_column="host")
+    def my_pipeline():
+        return _mock_df_with_hosts()
+
+    my_pipeline()
+
+    mock_send.assert_called_once()
+    ip, events = mock_send.call_args[0]
+    assert ip == "zerobus"
+    assert len(events) == 3
+    names = {e["metadata"]["table_name"] for e in events}
+    assert names == {"host1", "host2", "host3"}
+    assert all(e["type"] == "heartbeat" for e in events)
+
+
+@patch("silentpulse_sdp.observe.client.send_telemetry")
+def test_volume_asset_column(mock_send):
+    @volume(integration_point="zerobus", min_rows=10, asset_column="host")
+    def my_pipeline():
+        return _mock_df_with_host_counts()
+
+    my_pipeline()
+
+    mock_send.assert_called_once()
+    ip, events = mock_send.call_args[0]
+    assert len(events) == 3
+    assert all(e["type"] == "volume" for e in events)
+    counts = {e["metadata"]["table_name"]: e["metadata"]["row_count"] for e in events}
+    assert counts == {"host1": 40, "host2": 35, "host3": 25}
+
+
+@patch("silentpulse_sdp.observe.client.send_telemetry")
+def test_completeness_asset_column(mock_send):
+    @completeness(integration_point="zerobus", expected_columns=["host", "timestamp"], asset_column="host")
+    def my_pipeline():
+        return _mock_df_with_hosts()
+
+    my_pipeline()
+
+    mock_send.assert_called_once()
+    ip, events = mock_send.call_args[0]
+    assert len(events) == 3
+    assert all(e["type"] == "completeness" for e in events)
+    names = {e["metadata"]["table_name"] for e in events}
+    assert names == {"host1", "host2", "host3"}
+
+
+@patch("silentpulse_sdp.observe.client.send_telemetry")
+def test_freshness_asset_column(mock_send):
+    @freshness(integration_point="zerobus", max_delay_seconds=600, asset_column="host")
+    def my_pipeline():
+        return _mock_df_with_hosts()
+
+    my_pipeline()
+
+    mock_send.assert_called_once()
+    ip, events = mock_send.call_args[0]
+    assert len(events) == 3
+    assert all(e["type"] == "freshness" for e in events)
+    names = {e["metadata"]["table_name"] for e in events}
+    assert names == {"host1", "host2", "host3"}
+    assert all(e["metadata"]["max_delay_seconds"] == 600 for e in events)
+
+
+@patch("silentpulse_sdp.observe.client.send_telemetry")
+def test_heartbeat_asset_column_streaming_falls_back(mock_send):
+    """Streaming DataFrames ignore asset_column (can't collect)."""
+
+    @heartbeat(integration_point="zerobus", asset_column="host")
+    def my_pipeline():
+        return MockDataFrame(streaming=True)
+
+    my_pipeline()
+
+    mock_send.assert_called_once()
+    events = mock_send.call_args[0][1]
+    assert len(events) == 1
+    assert events[0]["metadata"]["table_name"] == "my_pipeline"
