@@ -136,12 +136,10 @@ class SilentPulseReader:
         self.page_size = int(options.get("page_size", "100"))
         self.timeout = int(options.get("timeout", "30"))
         self.max_retries = int(options.get("max_retries", "3"))
-        # Convert schema to field names eagerly (on driver) to avoid
-        # StructType vs DDL-string issues after pickling to executors.
-        if hasattr(schema, "fields"):
-            self._field_names = [f.name for f in schema.fields]
-        else:
-            self._field_names = [p.strip().split()[0] for p in schema.split(",")]
+        # Pre-compute field names from the DDL string (plain list of strings
+        # survives cloudpickle to executors; StructType objects may not).
+        ddl = SCHEMAS[self.resource]
+        self._field_names = [p.strip().split()[0] for p in ddl.split(",")]
 
     def _get_field_names(self):
         """Return ordered field names extracted during __init__."""
