@@ -136,10 +136,23 @@ class SilentPulseReader:
         self.page_size = int(options.get("page_size", "100"))
         self.timeout = int(options.get("timeout", "30"))
         self.max_retries = int(options.get("max_retries", "3"))
-        # Pre-compute field names from the DDL string (plain list of strings
-        # survives cloudpickle to executors; StructType objects may not).
+        # Pre-compute field names and types from the DDL string (plain lists
+        # survive cloudpickle to executors; StructType objects may not).
         ddl = SCHEMAS[self.resource]
-        self._field_names = [p.strip().split()[0] for p in ddl.split(",")]
+        self._field_names = []
+        self._timestamp_fields = set()
+        self._int_fields = set()
+        self._bool_fields = set()
+        for part in ddl.split(","):
+            tokens = part.strip().split()
+            name, dtype = tokens[0], tokens[1].upper()
+            self._field_names.append(name)
+            if dtype == "TIMESTAMP":
+                self._timestamp_fields.add(name)
+            elif dtype == "INT":
+                self._int_fields.add(name)
+            elif dtype == "BOOLEAN":
+                self._bool_fields.add(name)
 
     def _get_field_names(self):
         """Return ordered field names extracted during __init__."""
@@ -196,13 +209,27 @@ class SilentPulseReader:
     def _row_to_tuple(self, item, field_names):
         """Convert a JSON dict to a tuple in schema column order."""
         import json
+        from datetime import datetime, timezone
 
         values = []
         for name in field_names:
             val = item.get(name)
-            if isinstance(val, (dict, list)):
-                val = json.dumps(val)
-            values.append(val)
+            if val is None:
+                values.append(None)
+            elif name in self._timestamp_fields:
+                # Parse ISO 8601 string to datetime (PySpark requires datetime objects)
+                if isinstance(val, str):
+                    val = val.replace("Z", "+00:00")
+                    val = datetime.fromisoformat(val)
+                values.append(val)
+            elif name in self._int_fields:
+                values.append(int(val))
+            elif name in self._bool_fields:
+                values.append(bool(val))
+            elif isinstance(val, (dict, list)):
+                values.append(json.dumps(val))
+            else:
+                values.append(val)
         return tuple(values)
 
     def _read_all_pages(self, session, extra_params=None):
