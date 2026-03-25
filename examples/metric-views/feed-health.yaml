@@ -1,0 +1,43 @@
+# SilentPulse Feed Health Metric View
+# Tracks pipeline coverage and health per flow and asset group.
+#
+# Prerequisites:
+#   - silentpulse.monitoring.coverage table materialized via silentpulse-datasource
+#   - Databricks Runtime 17.2+
+#
+# Usage:
+#   SELECT `Flow Name`, MEASURE(`Total Assets`), MEASURE(`Healthy Flows`)
+#   FROM silentpulse.monitoring.feed_health_metrics
+#   GROUP BY ALL
+
+version: 1.1
+comment: "Feed health and pipeline coverage metrics from SilentPulse"
+source: silentpulse.monitoring.coverage
+
+dimensions:
+  - name: Flow Name
+    expr: flow_name
+    comment: "Data flow pipeline name"
+  - name: Asset Group
+    expr: asset_group_name
+    comment: "Logical group of monitored assets"
+  - name: Flow Enabled
+    expr: CASE WHEN flow_enabled THEN 'Enabled' ELSE 'Disabled' END
+    comment: "Whether the flow is currently enabled"
+
+measures:
+  - name: Total Assets
+    expr: SUM(total_assets)
+    comment: "Total number of assets across flows"
+  - name: Healthy Flows
+    expr: COUNT(CASE WHEN flow_enabled THEN 1 END)
+    comment: "Number of enabled/healthy flows"
+  - name: Disabled Flows
+    expr: COUNT(CASE WHEN NOT flow_enabled THEN 1 END)
+    comment: "Number of disabled flows"
+  - name: Total Flows
+    expr: COUNT(1)
+    comment: "Total number of configured flows"
+  - name: Coverage Pct
+    expr: COUNT(CASE WHEN flow_enabled THEN 1 END) * 100.0 / NULLIF(COUNT(1), 0)
+    comment: "Percentage of flows that are enabled and reporting"

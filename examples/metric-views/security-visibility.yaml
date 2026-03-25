@@ -1,45 +1,67 @@
-# SilentPulse Metric View Definition
-# Deploy this as a Unity Catalog Metric View to track security visibility KPIs.
+# SilentPulse Security Visibility Metric View
+# Deploy via: CREATE OR REPLACE VIEW ... WITH METRICS LANGUAGE YAML AS $$ ... $$
 #
-# See: https://docs.databricks.com/en/sql/language-manual/sql-ref-syntax-ddl-create-metric-view.html
+# Prerequisites:
+#   - SilentPulse data materialized in Unity Catalog via silentpulse-datasource
+#   - Databricks Runtime 17.2+
+#
+# Catalog layout (adjust catalog/schema to your environment):
+#   silentpulse.monitoring.alerts        - via spark.read.format("silentpulse").option("resource","alerts")
+#   silentpulse.monitoring.flows         - via spark.read.format("silentpulse").option("resource","flows")
+#   silentpulse.monitoring.entities      - via spark.read.format("silentpulse").option("resource","entities")
+#   silentpulse.monitoring.coverage      - via spark.read.format("silentpulse").option("resource","coverage")
+#
+# Usage:
+#   SELECT `Severity`, MEASURE(`Active Alerts`), MEASURE(`Silent Feeds`)
+#   FROM silentpulse.monitoring.alert_metrics
+#   GROUP BY ALL
 
-name: security_visibility
-description: Security telemetry visibility metrics from SilentPulse
-
-metrics:
-  - name: active_alerts
-    description: Number of currently active SilentPulse alerts
-    type: count
-    filter: "status = 'active'"
-    source:
-      table: silentpulse.monitoring.alerts
-
-  - name: silent_feeds
-    description: Number of security feeds that have gone silent
-    type: count
-    filter: "status = 'active' AND alert_type = 'silence'"
-    source:
-      table: silentpulse.monitoring.alerts
-
-  - name: visibility_coverage_pct
-    description: Percentage of expected assets currently reporting telemetry
-    type: ratio
-    numerator: "COUNT(CASE WHEN last_seen > current_timestamp() - INTERVAL 1 HOUR THEN 1 END)"
-    denominator: "COUNT(*)"
-    source:
-      table: silentpulse.monitoring.asset_status
-
-  - name: mean_time_to_detect_silence
-    description: Average time between telemetry loss and alert creation (minutes)
-    type: average
-    expression: "AVG(TIMESTAMPDIFF(MINUTE, silence_start, alert_created_at))"
-    source:
-      table: silentpulse.monitoring.alert_timeline
+version: 1.1
+comment: "Security telemetry visibility metrics from SilentPulse alerts"
+source: silentpulse.monitoring.alerts
 
 dimensions:
-  - name: severity
-    column: severity
-  - name: asset_group
-    column: asset_group_name
-  - name: flow_name
-    column: flow_name
+  - name: Severity
+    expr: severity
+    comment: "Alert severity level"
+  - name: Alert Type
+    expr: alert_type
+    comment: "Type of visibility issue (silence, degradation)"
+  - name: Asset Group
+    expr: asset_group_name
+    comment: "Logical group of monitored assets"
+  - name: Flow Name
+    expr: flow_name
+    comment: "Data flow pipeline name"
+  - name: Alert Day
+    expr: DATE_TRUNC('DAY', started_at)
+    comment: "Day the alert was created"
+  - name: Alert Week
+    expr: DATE_TRUNC('WEEK', started_at)
+    comment: "Week the alert was created"
+
+measures:
+  - name: Active Alerts
+    expr: COUNT(CASE WHEN status = 'active' THEN 1 END)
+    comment: "Number of currently active alerts"
+  - name: Silent Feeds
+    expr: COUNT(CASE WHEN status = 'active' AND alert_type = 'silence' THEN 1 END)
+    comment: "Number of security feeds that have gone silent"
+  - name: Degraded Feeds
+    expr: COUNT(CASE WHEN status = 'active' AND alert_type = 'degradation' THEN 1 END)
+    comment: "Number of feeds with degraded telemetry"
+  - name: Total Alerts
+    expr: COUNT(1)
+    comment: "Total alert count (all statuses)"
+  - name: Resolved Alerts
+    expr: COUNT(CASE WHEN status = 'resolved' THEN 1 END)
+    comment: "Number of resolved alerts"
+  - name: Mean Time to Detect (min)
+    expr: AVG(TIMESTAMPDIFF(MINUTE, started_at, resolved_at))
+    comment: "Average minutes from silence start to resolution"
+  - name: Blind Spot Hours
+    expr: SUM(TIMESTAMPDIFF(HOUR, started_at, COALESCE(resolved_at, current_timestamp())))
+    comment: "Cumulative hours of visibility loss across all alerts"
+  - name: Max Gap Duration (hours)
+    expr: MAX(TIMESTAMPDIFF(HOUR, started_at, COALESCE(resolved_at, current_timestamp())))
+    comment: "Longest single visibility gap in hours"
