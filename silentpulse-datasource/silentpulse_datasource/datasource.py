@@ -139,7 +139,11 @@ class SilentPulseReader:
         self._schema = schema
 
     def _get_field_names(self):
-        """Extract ordered field names from DDL schema string."""
+        """Extract ordered field names from schema (StructType or DDL string)."""
+        from pyspark.sql.types import StructType
+
+        if isinstance(self._schema, StructType):
+            return [f.name for f in self._schema.fields]
         fields = []
         for part in self._schema.split(","):
             name = part.strip().split()[0]
