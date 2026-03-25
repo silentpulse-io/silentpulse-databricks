@@ -136,19 +136,16 @@ class SilentPulseReader:
         self.page_size = int(options.get("page_size", "100"))
         self.timeout = int(options.get("timeout", "30"))
         self.max_retries = int(options.get("max_retries", "3"))
-        self._schema = schema
+        # Convert schema to field names eagerly (on driver) to avoid
+        # StructType vs DDL-string issues after pickling to executors.
+        if hasattr(schema, "fields"):
+            self._field_names = [f.name for f in schema.fields]
+        else:
+            self._field_names = [p.strip().split()[0] for p in schema.split(",")]
 
     def _get_field_names(self):
-        """Extract ordered field names from schema (StructType or DDL string)."""
-        from pyspark.sql.types import StructType
-
-        if isinstance(self._schema, StructType):
-            return [f.name for f in self._schema.fields]
-        fields = []
-        for part in self._schema.split(","):
-            name = part.strip().split()[0]
-            fields.append(name)
-        return fields
+        """Return ordered field names extracted during __init__."""
+        return self._field_names
 
     def _fetch_page(self, session, page, extra_params=None):
         """Fetch a single page from the API with retry on transient errors."""
