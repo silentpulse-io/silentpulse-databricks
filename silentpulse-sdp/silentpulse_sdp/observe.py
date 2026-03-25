@@ -46,16 +46,19 @@ def heartbeat(*, integration_point: str, interval_seconds: int = 300) -> Callabl
         def wrapper(*args: Any, **kwargs: Any) -> Any:
             result = func(*args, **kwargs)
             try:
-                client.send_telemetry(integration_point, [
-                    {
-                        "type": "heartbeat",
-                        "timestamp": _iso_now(),
-                        "metadata": {
-                            "table_name": func.__name__,
-                            "interval_seconds": interval_seconds,
-                        },
-                    }
-                ])
+                client.send_telemetry(
+                    integration_point,
+                    [
+                        {
+                            "type": "heartbeat",
+                            "timestamp": _iso_now(),
+                            "metadata": {
+                                "table_name": func.__name__,
+                                "interval_seconds": interval_seconds,
+                            },
+                        }
+                    ],
+                )
             except Exception:
                 logger.debug("heartbeat telemetry failed for %s", func.__name__, exc_info=True)
             return result
@@ -99,9 +102,9 @@ def completeness(*, integration_point: str, expected_columns: list[str] | None =
                     if total is not None:
                         metadata["total_rows"] = total
 
-                client.send_telemetry(integration_point, [
-                    {"type": "completeness", "timestamp": _iso_now(), "metadata": metadata}
-                ])
+                client.send_telemetry(
+                    integration_point, [{"type": "completeness", "timestamp": _iso_now(), "metadata": metadata}]
+                )
             except Exception:
                 logger.debug("completeness telemetry failed for %s", func.__name__, exc_info=True)
             return result
@@ -145,9 +148,9 @@ def volume(*, integration_point: str, min_rows: int = 0, max_rows: int | None = 
                         if max_rows is not None:
                             metadata["max_rows"] = max_rows
 
-                client.send_telemetry(integration_point, [
-                    {"type": event_type, "timestamp": _iso_now(), "metadata": metadata}
-                ])
+                client.send_telemetry(
+                    integration_point, [{"type": event_type, "timestamp": _iso_now(), "metadata": metadata}]
+                )
             except Exception:
                 logger.debug("volume telemetry failed for %s", func.__name__, exc_info=True)
             return result
@@ -185,9 +188,9 @@ def freshness(*, integration_point: str, max_delay_seconds: int = 3600) -> Calla
                     event_type = "freshness"
                     metadata["max_delay_seconds"] = max_delay_seconds
 
-                client.send_telemetry(integration_point, [
-                    {"type": event_type, "timestamp": _iso_now(), "metadata": metadata}
-                ])
+                client.send_telemetry(
+                    integration_point, [{"type": event_type, "timestamp": _iso_now(), "metadata": metadata}]
+                )
             except Exception:
                 logger.debug("freshness telemetry failed for %s", func.__name__, exc_info=True)
             return result
