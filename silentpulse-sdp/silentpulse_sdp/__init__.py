@@ -1,6 +1,6 @@
 """Observability decorators for Databricks Spark Declarative Pipelines."""
 
-__version__ = "0.1.0"
+__version__ = "0.1.7"
 
 from .config import configure, reset
 from .observe import completeness, freshness, heartbeat, volume
