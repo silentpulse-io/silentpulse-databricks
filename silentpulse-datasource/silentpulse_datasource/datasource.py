@@ -61,7 +61,7 @@ RESOURCE_ENDPOINTS = {
     "flows": ("/api/v1/flows", True, "data"),
     "entities": ("/api/v1/observed-entities", True, "data"),
     "observations": ("/api/v1/observation-types", True, "data"),
-    "coverage": ("/api/v1/dashboard/pipeline-coverage", False, "pipelines"),
+    "coverage": ("/api/v1/dashboard/pipeline-coverage", False, "data.pipelines"),
 }
 
 
@@ -194,8 +194,17 @@ class SilentPulseReader:
                     continue
 
                 body = resp.json()
-                items = body.get(response_key, []) if isinstance(body, dict) else body
-                total_pages = body.get("total_pages", 1) if isinstance(body, dict) else 1
+                # Navigate dotted response keys (e.g. "data.pipelines")
+                items = body
+                if isinstance(body, dict):
+                    for key in response_key.split("."):
+                        items = items.get(key, []) if isinstance(items, dict) else items
+                # total_pages may be at top level or nested in "meta"
+                if isinstance(body, dict):
+                    meta = body.get("meta", {})
+                    total_pages = meta.get("total_pages", body.get("total_pages", 1)) if isinstance(meta, dict) else 1
+                else:
+                    total_pages = 1
                 return items, total_pages
 
             except Exception as exc:
