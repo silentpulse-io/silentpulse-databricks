@@ -120,6 +120,64 @@ def gold_events_hourly():
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ## Streaming: foreachBatch telemetry
+# MAGIC
+# MAGIC SDP decorators degrade to heartbeat-only for streaming DataFrames
+# MAGIC because `collect()` and `groupBy()` fail on streaming DFs. To get
+# MAGIC full telemetry (volume, completeness, freshness) on streaming tables,
+# MAGIC use `streaming_sink()` or `report_batch()` with `foreachBatch`.
+# MAGIC
+# MAGIC Each micro-batch is a regular DataFrame, so all aggregation works.
+
+# COMMAND ----------
+
+from silentpulse_sdp import report_batch, streaming_sink
+
+# Option 1: streaming_sink() factory — simplest approach
+# Returns a foreachBatch handler with telemetry built in.
+
+sink = streaming_sink(
+    integration_point="siem-raw-events",
+    asset_column="host",
+    min_rows=10,
+    max_delay_seconds=600,
+)
+
+
+@dlt.table(name="bronze_streaming_sink")
+def bronze_streaming_sink():
+    return (
+        spark.readStream.format("cloudFiles")  # noqa: F821
+        .option("cloudFiles.format", "json")
+        .load("/mnt/security/raw-events/")
+        .writeStream.foreachBatch(sink)
+    )
+
+
+# COMMAND ----------
+
+# Option 2: report_batch() inside a custom foreachBatch handler
+# Use this when you need to write data AND report telemetry.
+
+
+def my_custom_sink(batch_df, batch_id):
+    # Report telemetry first
+    report_batch(
+        batch_df,
+        batch_id,
+        integration_point="siem-raw-events",
+        asset_column="host",
+        min_rows=10,
+        expected_columns=["host", "timestamp", "event_type"],
+        max_delay_seconds=600,
+    )
+    # Then write the batch to a table
+    batch_df.write.mode("append").saveAsTable("security.bronze_events")
+
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## Summary
 # MAGIC
 # MAGIC With these decorators in place, SilentPulse will:
@@ -128,7 +186,9 @@ def gold_events_hourly():
 # MAGIC - Alert when columns have unexpected NULL rates (data quality degradation)
 # MAGIC - Alert when data freshness exceeds acceptable delay (upstream issues)
 # MAGIC
-# MAGIC ## Decorator reference
+# MAGIC ## API reference
+# MAGIC
+# MAGIC ### Decorators (batch SDP tables)
 # MAGIC
 # MAGIC | Decorator | What it monitors | Key parameters |
 # MAGIC |-----------|-----------------|----------------|
@@ -136,6 +196,13 @@ def gold_events_hourly():
 # MAGIC | `@volume` | Row count per batch | `min_rows`, `max_rows` |
 # MAGIC | `@completeness` | NULL rates in columns | `expected_columns` |
 # MAGIC | `@freshness` | Data lag / staleness | `max_delay_seconds` (default: 3600) |
+# MAGIC
+# MAGIC ### Streaming (foreachBatch)
+# MAGIC
+# MAGIC | Function | Usage | Key parameters |
+# MAGIC |----------|-------|----------------|
+# MAGIC | `streaming_sink()` | Factory returning foreachBatch handler | `integration_point`, `asset_column`, `min_rows`, `max_rows`, `expected_columns`, `max_delay_seconds` |
+# MAGIC | `report_batch()` | Call inside custom foreachBatch | Same as above, plus `batch_df` and `batch_id` |
 # MAGIC
 # MAGIC ## Important: Decorator order
 # MAGIC
